@@ -12,6 +12,22 @@ Use:
 - BFF in the web host that aggregates CMS chrome + business data
 - Angular as its own app
 
+The host is the only project that knows both modules. Invoices never reference CMS types. CMS never references invoices. Angular never references C# types. The shared thing is the JSON body of `GET /api/me/invoices-page`.
+
+## Two processes while developing
+
+```mermaid
+flowchart LR
+    browser[Browser :4200] --> ng[ng serve]
+    ng -->|"proxy /api"| bff[BFF :5088]
+    bff --> api["GET /api/me/invoices-page"]
+    browser5088[Browser :5088] --> wwwroot["wwwroot/index.html"]
+```
+
+`npm start` serves the Angular app at http://localhost:4200. `frontend/proxy.conf.json` forwards `/api` to http://localhost:5088, so the page and the API look same-origin to the browser.
+
+http://localhost:5088 is the BFF. `UseDefaultFiles`, `UseStaticFiles`, and `MapFallbackToFile("index.html")` serve `src/Company.Portal.Web/wwwroot/index.html` for `/`. That file is a static stand-in. It is not the Angular app. `npm run build:wwwroot` deletes `wwwroot` and copies the Angular production build there, which is how one host serves both the page and the API after publish.
+
 ## Projects
 
 ```mermaid
@@ -30,32 +46,45 @@ flowchart TB
     tests --> invoices
 ```
 
-`Company.Portal.Web` is the composition root. It owns the BFF, auth, and static host. CMS and invoices stay feature assemblies. The Angular app shares the JSON contract, not C# types.
+| Project | Wired as | Why |
+|---|---|---|
+| `frontend/` | Calls `/api/me/invoices-page` and renders the JSON | The visitor UI is Angular. It stays a separate app so a CMS upgrade does not rebuild domain rules |
+| `Company.Portal.Web` | Composition root, controller, composer, auth, static files | Something must join CMS copy and invoices into one response. That join is a page concern, so it lives in the host |
+| `Company.Portal.Cms` | `IProvideInvoicesPageCopy` | Editor text is an adapter. The host asks for a DTO and does not see `PageData` |
+| `Company.Portal.Invoices` | `ICompileInvoiceOverview` | Overdue rules and the invoice store are business behavior. They stay in the feature assembly |
+| `Company.Portal.Invoices.Tests` | xUnit against the invoices assembly | Domain rules are tested without the host or the CMS |
 
-## Runtime map
+## Composition root
+
+`Program.cs` is the only place that registers both modules.
 
 ```mermaid
 flowchart TD
-    editor[Editor] --> copySource["Optimizely in production, StaticInvoicesPageCopy in this repo"]
-    visitor[Visitor] --> client[Angular or wwwroot]
-    client --> api["GET /api/me/invoices-page"]
-    api --> controller["InvoicesPageController reads OIDC sub"]
-    controller --> composer[InvoicesPageComposer]
-    composer --> pageCopy["IProvideInvoicesPageCopy"]
-    composer --> overview[ICompileInvoiceOverview]
-    pageCopy --> cache[CachedInvoicesPageCopy]
-    cache --> loader[ILoadInvoicesPageCopy]
-    loader --> copySource
-    overview --> domain["Invoice.IsOverdue"]
-    overview --> store[IRetrieveInvoices]
-    store --> ef["EF InMemory or SQL"]
+    program[Program.cs] --> invoices[AddInvoiceModule]
+    program --> cms[AddCmsModule]
+    program --> composer["IComposeInvoicesPage"]
+    program --> cache[AddDistributedMemoryCache]
+    program --> clock[TimeProvider.System]
+    program --> auth{Environment}
+    auth -->|Development| dev["Development scheme, X-User-Sub"]
+    auth -->|Otherwise| jwt["JWT Bearer, Auth:Authority and Auth:Audience"]
 ```
 
-## Request example
+`AddInvoiceModule` reads `ConnectionStrings:Invoices`. An empty string selects EF InMemory (`portal-invoices`). A SQL string selects SQL Server. The use case does not know which one it got.
+
+`AddCmsModule` registers `StaticInvoicesPageCopy` as `ILoadInvoicesPageCopy` and `CachedInvoicesPageCopy` as `IProvideInvoicesPageCopy`. The cache decorator is what the host calls. The loader is an internal detail the host can swap for Optimizely later.
+
+`TimeProvider.System` is registered once. Overdue checks and the 365-day invoice window both read that clock, so tests can move "today" without calling `DateTime.UtcNow`.
+
+On startup the host seeds `DemoInvoiceCatalog` when the invoice table is empty. The demo rows belong to subject `user-1`, which is also the development default.
+
+Pipeline order: HTTPS redirect, default files, static files, authentication, authorization, controllers, then the `index.html` fallback. API routes win over the fallback. Any other path returns the static page so a published Angular route still loads the SPA shell.
+
+## One request
 
 `GET /api/me/invoices-page`
 
-- Dev identity: header `X-User-Sub` or default `user-1`
+- Dev identity: header `X-User-Sub`, or `user-1` when the header is missing
 - Language: `Accept-Language` (`en` prefix → English, else Swedish)
 - 401 if no subject, 404 if CMS copy missing
 
@@ -90,6 +119,80 @@ sequenceDiagram
     end
 ```
 
+The controller is thin on purpose. It reads `sub` (or the name identifier), picks `en` or `sv`, and maps a null page to 404. It does not know about cache keys, EF, or overdue rules.
+
+`InvoicesPageComposer` starts both reads and waits with `Task.WhenAll`. Copy and invoices do not depend on each other. A missing copy is a missing page, so the composer returns null and drops the invoice list. An empty invoice list is still a page.
+
+`InvoicesPageResponse` is the JSON contract: `heading`, `introductionHtml`, `helpHtml`, and `invoices`. The Angular `InvoicesPage` interface repeats that shape. The two types are not shared, so the frontend build does not reference the .NET projects.
+
+## Auth
+
+```mermaid
+flowchart TD
+    request[Incoming request] --> scheme{ASPNETCORE_ENVIRONMENT}
+    scheme -->|Development| header["Read X-User-Sub"]
+    header --> subject["sub claim, default user-1"]
+    scheme -->|Production| bearer[Validate JWT]
+    bearer --> sub["Keep inbound sub claim"]
+    subject --> controller[InvoicesPageController]
+    sub --> controller
+```
+
+Development uses `DevelopmentAuthenticationHandler`. It always succeeds. A missing `X-User-Sub` becomes `user-1`, so local calls are authenticated without a token server. The 401 branch in the controller is for a production token that has no subject.
+
+Production uses JWT Bearer. `MapInboundClaims` is false so the OIDC `sub` claim stays `sub` and the controller can read it. `Auth:Authority` and `Auth:Audience` point at Entra ID or a BankID broker.
+
+The Angular `authInterceptor` adds `Authorization: Bearer` when `sessionStorage` holds `access_token`. In development the BFF does not need that header. The interceptor is the production path, kept in one place so feature code does not read storage.
+
+## CMS adapter
+
+```mermaid
+flowchart LR
+    composer[InvoicesPageComposer] --> provide[IProvideInvoicesPageCopy]
+    provide --> cached[CachedInvoicesPageCopy]
+    cached --> memory["IDistributedCache, 2 minutes"]
+    cached --> load[ILoadInvoicesPageCopy]
+    load --> staticCopy[StaticInvoicesPageCopy]
+    load -.-> optimizely[Optimizely loader in production]
+```
+
+`IProvideInvoicesPageCopy` is the port the host is allowed to see. `ILoadInvoicesPageCopy` is internal. Callers cache the DTO, not a CMS page object, so a later Optimizely implementation can change without changing the composer.
+
+`CachedInvoicesPageCopy` stores JSON under `cms:invoices-page:{language}` for two minutes. This repo registers `AddDistributedMemoryCache`, which is process-local. A second instance needs Redis behind the same `IDistributedCache` interface. The loader is not called again until the entry expires or is missing.
+
+`StaticInvoicesPageCopy` returns Swedish copy unless the language is `en`. It exists so the solution compiles and runs without Optimizely packages. Production replaces that registration with a loader that maps a published page to `InvoicesPageCopy`.
+
+## Invoice module
+
+```mermaid
+flowchart TD
+    composer[InvoicesPageComposer] --> compile[CompileInvoiceOverview]
+    compile --> invoice["Invoice.IsOverdue today"]
+    compile --> retrieve[IRetrieveInvoices]
+    retrieve --> store[SqlInvoiceStore]
+    store --> db{ConnectionStrings:Invoices}
+    db -->|empty| memory[EF InMemory]
+    db -->|set| sql[SQL Server]
+```
+
+`IRetrieveInvoices` is a role, not an `IInvoiceRepository`. `SqlInvoiceStore` loads rows for the subject whose due date is inside the last 365 days, then maps each `InvoiceRecord` to an `Invoice`. The record is the EF shape. The `Invoice` is the behavior.
+
+`Invoice.IsOverdue` is true when the status is open and the due date is before today. A paid invoice must have a payment timestamp. Those rules sit in the domain type so the controller cannot reimplement them.
+
+`CompileInvoiceOverview` sorts by due date and maps each invoice to `InvoiceOverviewItem` (`id`, `amount`, `currency`, `dueDate`, `status`, `isOverdue`). That record is the list item in the JSON. The Angular template binds those fields and does not recalculate overdue.
+
+## Angular page
+
+```mermaid
+flowchart TD
+    app[App] --> page[InvoicesPageComponent]
+    page --> service[InvoicesService]
+    interceptor[authInterceptor] --> service
+    service --> api["GET /api/me/invoices-page"]
+```
+
+`App` only hosts `InvoicesPageComponent`. The component turns the HTTP call into a `view` signal with `loading`, `error`, and `ok`. `InvoicesService` is the only HTTP caller. The template and styles live beside the class (`invoices-page.component.html` and `.css`). CMS HTML fields are bound with `[innerHTML]` because the editor owns that markup.
+
 ## Production Azure (not referenced so the repo compiles)
 
 ```mermaid
@@ -105,7 +208,15 @@ flowchart LR
     web --> insights[App Insights]
 ```
 
-CMS on its own App Service is optional. This repo keeps the static copy loader so it compiles without Optimizely packages.
+| Swap | From | To | Why |
+|---|---|---|---|
+| Page copy | `StaticInvoicesPageCopy` | Optimizely `ILoadInvoicesPageCopy` | Editors publish the texts. The cache still stores the DTO |
+| Invoice store | EF InMemory | Azure SQL via `ConnectionStrings:Invoices` | InMemory is the empty-connection default so the repo runs with no database |
+| Cache | Memory | Azure Cache for Redis | Memory cache is not shared across instances |
+| Auth | `DevelopmentAuthenticationHandler` | JWT Bearer | Production identity comes from Entra ID or a BankID broker |
+| UI host | `ng serve` on 4200 | `wwwroot` inside the Web app | One App Service serves the built SPA and the API |
+
+CMS on its own App Service is optional. Front Door or Gateway is the edge. Key Vault holds secrets. App Insights is telemetry. Blob storage is for CMS media. None of those packages are referenced here, so the solution still builds offline.
 
 ## Folder rule
 
