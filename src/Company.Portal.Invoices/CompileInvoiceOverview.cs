@@ -11,10 +11,12 @@ internal sealed class CompileInvoiceOverview(IRetrieveInvoices invoices) : IComp
         IReadOnlyList<Invoice> invoicesForSubject =
             await invoices.ListRecent(subject, cancellationToken).ConfigureAwait(false);
 
-        return invoicesForSubject
-            .OrderBy(invoice => invoice.Snapshot.DueDate)
-            .Select(invoice => ToItem(invoice, today))
-            .ToArray();
+        return
+        [
+            .. invoicesForSubject
+                .OrderBy(invoice => invoice.Snapshot.DueDate)
+                .Select(invoice => ToItem(invoice, today)),
+        ];
     }
 
     private static InvoiceOverviewItem ToItem(Invoice invoice, DateOnly today)

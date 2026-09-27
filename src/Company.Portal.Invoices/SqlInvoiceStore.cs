@@ -18,7 +18,7 @@ internal sealed class SqlInvoiceStore(InvoicesDbContext database, TimeProvider c
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return rows.Select(ToInvoice).ToArray();
+        return [.. rows.Select(ToInvoice)];
     }
 
     private static Invoice ToInvoice(InvoiceRecord record)
