@@ -6,6 +6,12 @@
 
 Run the BFF, then the Angular dev server. `proxy.conf.json` forwards `/api` to `http://localhost:5088`.
 
+```mermaid
+flowchart LR
+    browser[Browser] --> ng["ng serve :4200"]
+    ng -->|"proxy /api"| bff["dotnet run :5088"]
+```
+
 ```text
 dotnet run --project src/Company.Portal.Web
 cd frontend && npm ci && npm start
@@ -14,6 +20,15 @@ cd frontend && npm ci && npm start
 Open the URL `ng serve` prints (default http://localhost:4200).
 
 ## Production flow
+
+```mermaid
+flowchart TD
+    frontend[frontend] --> build["npm run build:wwwroot"]
+    build --> dist["dist/portal/browser"]
+    dist --> wwwroot["src/Company.Portal.Web/wwwroot"]
+    wwwroot --> publish["dotnet publish"]
+    publish --> host["ASP.NET serves SPA and /api"]
+```
 
 ```text
 cd frontend

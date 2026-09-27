@@ -29,10 +29,19 @@ Swedish kravlista used to infer the stack.
 
 ## Inferred wiring
 
-- Optimizely CMS for editor content
-- ASP.NET Core APIs / BFF
-- Angular SPA for UI
-- OIDC + OAuth for login and API tokens
-- Azure App Service (Docker only a plus → not AKS-first)
-- Azure DevOps YAML CI with Cypress quality gates
-- SQL Server / Azure SQL under Optimizely; Redis when scaled out
+```mermaid
+flowchart LR
+    editor[Editor] --> cms[Optimizely CMS]
+    visitor[Visitor] --> spa[Angular SPA]
+    spa --> bff[ASP.NET Core BFF]
+    idp[OIDC and OAuth] --> spa
+    idp --> bff
+    bff --> cms
+    bff --> sql[Azure SQL]
+    cms --> sql
+    bff --> redis[Redis when scaled out]
+    ci[Azure DevOps CI] --> cypress[Cypress gate]
+    cypress --> spa
+```
+
+Docker is meriting only, so the host is App Service rather than AKS.
