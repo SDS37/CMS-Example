@@ -1,11 +1,5 @@
-# Origin job requirements (source of the slice)
-
-Swedish kravlista used to infer the stack.
-
 ## Required
 
-- Relevant post-secondary education
-- At least 5 years of web development
 - Expert C#, JavaScript, TypeScript, .NET, CSS
 - Expert Angular
 - Azure DevOps including Continuous Integration
