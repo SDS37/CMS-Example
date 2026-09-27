@@ -1,0 +1,14 @@
+:host {
+  display: block;
+  font-family: sans-serif;
+  margin: 2rem;
+  max-width: 40rem;
+}
+
+.overdue {
+  color: #b00020;
+}
+
+li {
+  margin: 0.4rem 0;
+}

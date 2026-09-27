@@ -1,0 +1,18 @@
+@if (view().status === 'loading') {
+  <p>Laddar fakturor…</p>
+} @else if (view().status === 'error') {
+  <p>Kunde inte hämta sidan. Försök igen.</p>
+} @else {
+  <h1>{{ view().page?.heading }}</h1>
+  <div [innerHTML]="view().page?.introductionHtml"></div>
+  <ul>
+    @for (invoice of view().page?.invoices ?? []; track invoice.id) {
+      <li [class.overdue]="invoice.isOverdue">
+        {{ invoice.amount | number: '1.2-2' }} {{ invoice.currency }}
+        — due {{ invoice.dueDate }}
+        @if (invoice.isOverdue) { <span>Overdue</span> }
+      </li>
+    }
+  </ul>
+  <aside [innerHTML]="view().page?.helpHtml"></aside>
+}
