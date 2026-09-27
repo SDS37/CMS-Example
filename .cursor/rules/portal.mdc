@@ -5,8 +5,6 @@ alwaysApply: true
 
 # Company.Portal
 
-Follow `AGENTS.md` at the repo root.
-
 Architecture: CMS-backed modular monolith + BFF + Angular. Not a system-wide onion. CMS is infrastructure. Invoices are a clean module.
 
 C# follows csharpcodingguidelines.com + thangchung/clean-code-dotnet. Conflicts: no underscore fields, max 3 args, no Async suffix without a sync twin, feature projects, braces on new lines, internal sealed by default.

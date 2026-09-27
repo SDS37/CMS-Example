@@ -2,8 +2,6 @@
 
 Compilable slice from the design chat: Optimizely-style CMS + Angular contract + .NET BFF + invoices module.
 
-Drop this **entire folder** into Cursor and use Agent. Standing orders: `AGENTS.md`. How-to: `docs/cursor-agent.md`.
-
 ## Build and test
 
 ```bash
@@ -38,9 +36,8 @@ CMS copy is static. Replace `StaticInvoicesPageCopy` with Optimizely in producti
 
 | File | Content |
 |---|---|
-| `AGENTS.md` | Cursor agent brief |
 | `docs/origin-requirements.md` | Job kravlista and inferred stack |
 | `docs/architecture.md` | Why not full onion; runtime map |
 | `docs/coding-standards.md` | Doomen + clean-code-dotnet |
 | `docs/angular-build.md` | `ng build` and CI copy into wwwroot |
-| `docs/cursor-agent.md` | Open this folder in Cursor |
+| `docs/frontend-code-standards.md` | Angular app conventions |
