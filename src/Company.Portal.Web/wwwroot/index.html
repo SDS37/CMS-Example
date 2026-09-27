@@ -10,14 +10,14 @@
   </style>
 </head>
 <body>
-  <p id="status">Laddar fakturor…</p>
+  <p id="status">Laddar fakturor</p>
   <article id="page" hidden>
     <h1 id="heading"></h1>
     <div id="intro"></div>
     <ul id="invoices"></ul>
     <aside id="help"></aside>
   </article>
-  <script>
+  <!-- <script>
     fetch('/api/me/invoices-page', { headers: { 'Accept-Language': 'sv', 'X-User-Sub': 'user-1' } })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(page => {
@@ -35,6 +35,6 @@
         }
       })
       .catch(() => { document.getElementById('status').textContent = 'Kunde inte hamta sidan.'; });
-  </script>
+  </script> -->
 </body>
 </html>
