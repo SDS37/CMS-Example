@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <title>Mina fakturor</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; max-width: 40rem; }
+    .overdue { color: #b00020; }
+    li { margin: 0.4rem 0; }
+  </style>
+</head>
+<body>
+  <p id="status">Laddar fakturor…</p>
+  <article id="page" hidden>
+    <h1 id="heading"></h1>
+    <div id="intro"></div>
+    <ul id="invoices"></ul>
+    <aside id="help"></aside>
+  </article>
+  <script>
+    fetch('/api/me/invoices-page', { headers: { 'Accept-Language': 'sv', 'X-User-Sub': 'user-1' } })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(page => {
+        document.getElementById('status').hidden = true;
+        document.getElementById('page').hidden = false;
+        document.getElementById('heading').textContent = page.heading;
+        document.getElementById('intro').innerHTML = page.introductionHtml;
+        document.getElementById('help').innerHTML = page.helpHtml;
+        const list = document.getElementById('invoices');
+        for (const invoice of page.invoices) {
+          const item = document.createElement('li');
+          if (invoice.isOverdue) item.className = 'overdue';
+          item.textContent = `${invoice.amount} ${invoice.currency} — ${invoice.dueDate} ${invoice.status}`;
+          list.appendChild(item);
+        }
+      })
+      .catch(() => { document.getElementById('status').textContent = 'Kunde inte hamta sidan.'; });
+  </script>
+</body>
+</html>
