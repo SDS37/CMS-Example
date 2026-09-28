@@ -16,18 +16,18 @@ One standalone Angular 22 app. It renders **Mina fakturor** and calls the BFF ov
 flowchart TD
     app[App] --> page[InvoicesPageComponent]
     page --> service[InvoicesService]
-    interceptor[authInterceptor] --> service
+    interceptor[sessionInterceptor] --> service
     service --> api["GET /api/me/invoices-page"]
 ```
 
-`App` only hosts the invoices page. `InvoicesService` is the only HTTP caller. The interceptor attaches a bearer token when one is stored. The page does not talk to SQL, Optimizely, or Redis.
+`App` only hosts the invoices page. `InvoicesService` is the only HTTP caller. `sessionInterceptor` navigates to `/bff/login` when the BFF returns 401. It does not attach a bearer token. The page does not talk to SQL, Optimizely, or Redis.
 
 ## Layout
 
 | Path | Owns |
 |---|---|
 | `src/app/invoices/` | Page, service, and `invoices.models.ts` |
-| `src/app/core/` | HTTP interceptor |
+| `src/app/core/` | Session interceptor |
 | `src/main.ts` | `bootstrapApplication` |
 
 - Feature folders, not top-level `components/` and `services/` buckets
@@ -54,7 +54,7 @@ Keep the compiler strictness already in `frontend/tsconfig.json` (`strictInjecti
 - Prefer `input()` / `output()` when a presentational piece is extracted. That piece does not call HTTP
 - View state is a signal (`toSignal` on the page request is the current shape). Do not add NgRx or a global store for this one screen
 - Angular 22 checks components when a signal, input, or template event changes. Do not set `ChangeDetectionStrategy.Eager` to paper over a stale binding
-- Provide `HttpClient` with `provideHttpClient(withInterceptors([authInterceptor]))`
+- Provide `HttpClient` with `provideHttpClient(withInterceptors([sessionInterceptor]))`
 - Do not subscribe or start HTTP in a constructor. Long-lived subscriptions use `takeUntilDestroyed`
 - Bind fields and message text. Do not call formatters from the template for every row
 - Name handlers for the action (`reloadPage()`), not the DOM event (`handleClick()`)
@@ -65,10 +65,10 @@ private readonly invoices: InvoicesService = inject(InvoicesService);
 
 ## API and auth
 
-- Call same-origin `/api/me/invoices-page`. The dev server proxies that path to `http://localhost:5088`
-- Dev identity is the BFF header `X-User-Sub` (default `user-1`). Production is JWT Bearer (`Auth:Authority`, `Auth:Audience`)
-- The interceptor reads `sessionStorage` `access_token` and sets `Authorization` when a token exists. Do not scatter `sessionStorage.getItem` through features
-- Authorization comes from the BFF identity (`sub`), not from a subject the page puts in the body
+- Call same-origin `/api/me/invoices-page` and `/bff/login`. The dev server proxies both paths to `http://localhost:5088`
+- The browser session is the `__Host-bff` cookie. Do not store access tokens, refresh tokens, or client secrets in `sessionStorage` or `localStorage`
+- On 401, `sessionInterceptor` navigates to `/bff/login`. That is the only auth behavior in the SPA
+- The BFF reads `sub` from the server session. The page does not send a subject in the body
 - `heading`, `introductionHtml`, and `helpHtml` are CMS copy. Bind those HTML fields with `[innerHTML]`. Do not bind visitor-typed strings that way
 
 ## Copy

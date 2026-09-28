@@ -26,7 +26,7 @@ npm start
 
 That dev server proxies `/api` to port 5088. `npm run build:wwwroot` copies a production build into `wwwroot`.
 
-Development auth: caller is `user-1` unless you send `X-User-Sub`. Production: JWT Bearer (`Auth:Authority`, `Auth:Audience`).
+Development session: open `/bff/login`. The BFF sets an `__Host-bff` cookie for `user-1` unless that login request sends `X-User-Sub`. Production login is the authorization-code flow (`Auth:Authority`, `Auth:ClientId`, `Auth:ClientSecret`). The browser does not store tokens.
 
 Empty `ConnectionStrings:Invoices` → EF InMemory. Set a SQL connection string for SQL Server.
 

@@ -4,12 +4,12 @@
 
 ## Local
 
-Run the BFF, then the Angular dev server. `proxy.conf.json` forwards `/api` to `http://localhost:5088`.
+Run the BFF, then the Angular dev server. `proxy.conf.json` forwards `/api` and `/bff` to `http://localhost:5088`.
 
 ```mermaid
 flowchart LR
     browser[Browser] --> ng["ng serve :4200"]
-    ng -->|"proxy /api"| bff["dotnet run :5088"]
+    ng -->|"proxy /api and /bff"| bff["dotnet run :5088"]
 ```
 
 ```text
@@ -63,4 +63,4 @@ flowchart LR
 
 CI runs on every push and pull request to `main`: `dotnet test`, `npm test`, `build:wwwroot`, then `dotnet publish`.
 
-CD runs on `main` after CI. It deploys that published build to the Azure DevOps environment `test` and starts it on the agent. Cypress then opens that site. It does not run against `ng serve`. The test host uses the Development auth scheme so the demo subject `user-1` can load invoices before a real identity provider is configured.
+CD runs on `main` after CI. It deploys that published build to the Azure DevOps environment `test` and starts it on the agent. Cypress opens `/bff/login` on that site, then the invoices page. It does not run against `ng serve`. The test host is Development, so login creates a server session for `user-1` before a real identity provider is configured.

@@ -24,7 +24,7 @@ flowchart LR
     browser5088[Browser :5088] --> wwwroot["wwwroot/index.html"]
 ```
 
-`npm start` serves the Angular app at http://localhost:4200. `frontend/proxy.conf.json` forwards `/api` to http://localhost:5088, so the page and the API look same-origin to the browser.
+`npm start` serves the Angular app at http://localhost:4200. `frontend/proxy.conf.json` forwards `/api` and `/bff` to http://localhost:5088, so the page, the session, and the API look same-origin to the browser.
 
 http://localhost:5088 is the BFF. `UseDefaultFiles`, `UseStaticFiles`, and `MapFallbackToFile("index.html")` serve `src/Company.Portal.Web/wwwroot/index.html` for `/`. That file is a static stand-in. It is not the Angular app. `npm run build:wwwroot` deletes `wwwroot` and copies the Angular production build there, which is how one host serves both the page and the API after publish.
 
@@ -66,8 +66,8 @@ flowchart TD
     program --> cache[AddDistributedMemoryCache]
     program --> clock[TimeProvider.System]
     program --> auth{Environment}
-    auth -->|Development| dev["Development scheme, X-User-Sub"]
-    auth -->|Otherwise| jwt["JWT Bearer, Auth:Authority and Auth:Audience"]
+    auth -->|Development| dev["Cookie session, login signs in user-1"]
+    auth -->|Otherwise| oidc["Authorization code on the BFF"]
 ```
 
 `AddInvoiceModule` reads `ConnectionStrings:Invoices`. An empty string selects EF InMemory (`portal-invoices`). A SQL string selects SQL Server. The use case does not know which one it got.
@@ -78,15 +78,16 @@ flowchart TD
 
 On startup the host seeds `DemoInvoiceCatalog` when the invoice table is empty. The demo rows belong to subject `user-1`, which is also the development default.
 
-Pipeline order: HTTPS redirect, default files, static files, authentication, authorization, controllers, then the `index.html` fallback. API routes win over the fallback. Any other path returns the static page so a published Angular route still loads the SPA shell.
+Pipeline order: HTTPS redirect, cross-origin rejection, default files, static files, authentication, authorization, controllers, then the `index.html` fallback. API routes win over the fallback. Any other path returns the static page so a published Angular route still loads the SPA shell. `/api` and `/bff/logout` reject a `cross-site` fetch. The SPA and the BFF stay on one site, which is what lets the session cookie use `SameSite=Strict`.
 
 ## One request
 
 `GET /api/me/invoices-page`
 
-- Dev identity: header `X-User-Sub`, or `user-1` when the header is missing
+- Session: `__Host-bff` cookie. A missing session is 401, and the SPA navigates to `/bff/login`
+- Development login signs in `user-1`, or the subject in `X-User-Sub` on that login request
 - Language: `Accept-Language` (`en` prefix → English, else Swedish)
-- 401 if no subject, 404 if CMS copy missing
+- 404 if CMS copy missing
 
 ```mermaid
 sequenceDiagram
@@ -98,7 +99,7 @@ sequenceDiagram
     participant Store as IRetrieveInvoices
 
     Client->>Controller: GET /api/me/invoices-page
-    alt No OIDC sub
+    alt No session
         Controller-->>Client: 401
     else Subject present
         par Page copy
@@ -125,24 +126,45 @@ The controller is thin on purpose. It reads `sub` (or the name identifier), pick
 
 `InvoicesPageResponse` is the JSON contract: `heading`, `introductionHtml`, `helpHtml`, and `invoices`. The Angular `InvoicesPage` interface repeats that shape. The two types are not shared, so the frontend build does not reference the .NET projects.
 
-## Auth
+## Session
+
+The BFF is the OAuth confidential client. The Angular app is not. Tokens stay in the server session. The browser only receives a session cookie.
 
 ```mermaid
-flowchart TD
-    request[Incoming request] --> scheme{ASPNETCORE_ENVIRONMENT}
-    scheme -->|Development| header["Read X-User-Sub"]
-    header --> subject["sub claim, default user-1"]
-    scheme -->|Production| bearer[Validate JWT]
-    bearer --> sub["Keep inbound sub claim"]
-    subject --> controller[InvoicesPageController]
-    sub --> controller
+sequenceDiagram
+    participant Spa as Angular
+    participant Bff as BFF
+    participant Sts as Entra ID or BankID
+    participant Cache as Server session
+
+    Spa->>Bff: GET /api/me/invoices-page
+    alt No session cookie
+        Bff-->>Spa: 401
+        Spa->>Bff: GET /bff/login
+        alt Development
+            Bff->>Cache: Store subject user-1
+            Bff-->>Spa: Set-Cookie __Host-bff and redirect /
+        else Production
+            Bff->>Sts: Authorization code with client authentication and PKCE
+            Sts-->>Bff: Identity token, access token, refresh token
+            Bff->>Cache: Store the tokens with the subject
+            Bff-->>Spa: Set-Cookie __Host-bff and redirect /
+        end
+    end
+    Spa->>Bff: GET /api/me/invoices-page with cookie
+    Bff->>Cache: Load the session
+    Bff-->>Spa: 200 InvoicesPageResponse
 ```
 
-Development uses `DevelopmentAuthenticationHandler`. It always succeeds. A missing `X-User-Sub` becomes `user-1`, so local calls are authenticated without a token server. The 401 branch in the controller is for a production token that has no subject.
+`__Host-bff` is `Secure`, `HttpOnly`, and `SameSite=Strict`, with `Path=/` and no `Domain`. Script cannot read it. A cross-site page cannot attach it. The cookie value is a session key. `DistributedCacheTicketStore` keeps the authentication ticket, including any tokens, in `IDistributedCache` and protects that payload with data protection. This repo uses the memory cache. A second instance needs Redis behind the same interface, and that cache must stay private because the ticket can hold tokens.
 
-Production uses JWT Bearer. `MapInboundClaims` is false so the OIDC `sub` claim stays `sub` and the controller can read it. `Auth:Authority` and `Auth:Audience` point at Entra ID or a BankID broker.
+Development login does not call an identity provider. `GET /bff/login` stores `user-1`, or `X-User-Sub` when that header is present on the login request, and redirects to a local path. `POST /bff/logout` removes the server ticket.
 
-The Angular `authInterceptor` adds `Authorization: Bearer` when `sessionStorage` holds `access_token`. In development the BFF does not need that header. The interceptor is the production path, kept in one place so feature code does not read storage.
+Production login challenges OpenID Connect. The BFF exchanges the code with `Auth:ClientId` and `Auth:ClientSecret`, uses PKCE, and keeps `MapInboundClaims` false so `sub` stays `sub`. `SaveTokens` puts the tokens in the server ticket. The invoices module still authorizes with that `sub`. This slice does not forward the access token to another API, because the invoice read runs in-process. A later downstream call would attach the token from the session, not from the browser.
+
+Access tokens should stay short-lived. Refresh tokens, when the identity provider issues them, should not outlive the eight-hour session. Client authentication with a private key (mTLS or a JWT bearer client assertion) and sender-constrained access tokens (`cnf` / `x5t#S256`) are the next hardening step when Entra ID or the BankID broker supports them. This repo does not terminate mTLS.
+
+The Angular `sessionInterceptor` does not add an `Authorization` header and does not read storage. On 401 it navigates to `/bff/login`. The browser attaches the cookie by itself.
 
 ## CMS adapter
 
@@ -187,11 +209,11 @@ flowchart TD
 flowchart TD
     app[App] --> page[InvoicesPageComponent]
     page --> service[InvoicesService]
-    interceptor[authInterceptor] --> service
+    interceptor[sessionInterceptor] --> service
     service --> api["GET /api/me/invoices-page"]
 ```
 
-`App` only hosts `InvoicesPageComponent`. The component turns the HTTP call into a `view` signal with `loading`, `error`, and `ok`. `InvoicesService` is the only HTTP caller. The template and styles live beside the class (`invoices-page.component.html` and `.css`). CMS HTML fields are bound with `[innerHTML]` because the editor owns that markup.
+`App` only hosts `InvoicesPageComponent`. The component turns the HTTP call into a `view` signal with `loading`, `error`, and `ok`. `InvoicesService` is the only HTTP caller. `sessionInterceptor` sends the browser to `/bff/login` on 401. The template and styles live beside the class (`invoices-page.component.html` and `.css`). CMS HTML fields are bound with `[innerHTML]` because the editor owns that markup.
 
 ## Production Azure (not referenced so the repo compiles)
 
@@ -213,7 +235,7 @@ flowchart LR
 | Page copy | `StaticInvoicesPageCopy` | Optimizely `ILoadInvoicesPageCopy` | Editors publish the texts. The cache still stores the DTO |
 | Invoice store | EF InMemory | Azure SQL via `ConnectionStrings:Invoices` | InMemory is the empty-connection default so the repo runs with no database |
 | Cache | Memory | Azure Cache for Redis | Memory cache is not shared across instances |
-| Auth | `DevelopmentAuthenticationHandler` | JWT Bearer | Production identity comes from Entra ID or a BankID broker |
+| Auth | Development cookie login | Authorization code on the BFF | The BFF is the confidential client. The browser keeps `__Host-bff`, not tokens |
 | UI host | `ng serve` on 4200 | `wwwroot` inside the Web app | One App Service serves the built SPA and the API |
 
 CMS on its own App Service is optional. Front Door or Gateway is the edge. Key Vault holds secrets. App Insights is telemetry. Blob storage is for CMS media. None of those packages are referenced here, so the solution still builds offline.

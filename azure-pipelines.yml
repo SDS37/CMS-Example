@@ -104,7 +104,8 @@ stages:
                     trap cleanup EXIT
                     ready=0
                     for _ in $(seq 1 40); do
-                      if curl -fsS "$(testSiteUrl)/api/me/invoices-page" -o /dev/null; then
+                      code=$(curl -s -o /dev/null -w '%{http_code}' "$(testSiteUrl)/api/me/invoices-page" || true)
+                      if [ "$code" = "401" ] || [ "$code" = "200" ]; then
                         ready=1
                         break
                       fi

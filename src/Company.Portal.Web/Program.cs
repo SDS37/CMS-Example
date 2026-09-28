@@ -1,8 +1,6 @@
 using Company.Portal.Cms;
 using Company.Portal.Invoices;
 using Company.Portal.Web;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -12,25 +10,7 @@ builder.Services.AddDistributedMemoryCache();
 builder.Services.AddInvoiceModule(builder.Configuration.GetConnectionString("Invoices"));
 builder.Services.AddCmsModule();
 builder.Services.AddScoped<IComposeInvoicesPage, InvoicesPageComposer>();
-
-if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
-        .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
-            DevelopmentAuthenticationHandler.SchemeName,
-            _ => { });
-}
-else
-{
-    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
-        {
-            options.Authority = builder.Configuration["Auth:Authority"];
-            options.Audience = builder.Configuration["Auth:Audience"];
-            options.MapInboundClaims = false;
-        });
-}
-
+builder.Services.AddBffAuthentication(builder.Environment, builder.Configuration);
 builder.Services.AddAuthorization();
 
 WebApplication application = builder.Build();
@@ -42,6 +22,7 @@ using (IServiceScope scope = application.Services.CreateScope())
 }
 
 application.UseHttpsRedirection();
+application.UseMiddleware<RejectCrossOriginRequests>();
 application.UseDefaultFiles();
 application.UseStaticFiles();
 application.UseAuthentication();

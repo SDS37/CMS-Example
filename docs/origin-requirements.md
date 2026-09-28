@@ -25,9 +25,8 @@
 flowchart LR
     editor[Editor] --> cms[Optimizely CMS]
     visitor[Visitor] --> spa[Angular SPA]
-    spa --> bff[ASP.NET Core BFF]
-    idp[OIDC and OAuth] --> spa
-    idp --> bff
+    spa -->|"cookie session"| bff[ASP.NET Core BFF]
+    idp[OIDC and OAuth] --> bff
     bff --> cms
     bff --> sql[Azure SQL]
     cms --> sql
@@ -43,7 +42,7 @@ Required skills are the boxes on the diagram. SQL and Redis are meriting, and th
 | Editor → Optimizely CMS | Editors publish the page texts | A CMS is required, and Optimizely is the preferred product |
 | Visitor → Angular SPA | The logged-in UI | Angular is a required expert skill, so the visitor app is its own client |
 | SPA → ASP.NET Core BFF | One REST JSON call returns CMS chrome and invoices | C# / .NET, REST, and JSON are required. The BFF is the aggregator for that response |
-| OIDC and OAuth | Signs the visitor in and gives the SPA and the BFF the same identity | OAuth and OpenID Connect are required on both the browser and the API |
+| OIDC and OAuth | The BFF runs the authorization-code flow and keeps the tokens in a server session | The SPA is a public client and cannot protect tokens. The BFF is the confidential client |
 | BFF → CMS | Reads editor texts as DTOs | The CMS is an adapter. Optimizely types stay out of the invoice module |
 | BFF and CMS → Azure SQL | Stores invoices and CMS content | Azure is required. SQL is meriting, and both Optimizely and invoices need a database |
 | BFF → Redis | Caches CMS DTOs when more than one instance serves the site | A distributed cache is meriting, so Redis is the scale-out path |
