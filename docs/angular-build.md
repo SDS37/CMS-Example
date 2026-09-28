@@ -51,6 +51,16 @@ Runtime: ASP.NET serves the SPA from `wwwroot`. API calls stay same-origin (`/ap
 
 `ng serve` is for local reload only. Do not deploy it.
 
-## CI note
+## CI and CD
 
-Job spec wants Azure DevOps CI and Cypress before release. Cypress should hit the published test site, not only `ng serve`.
+`azure-pipelines.yml` is the Azure DevOps pipeline.
+
+```mermaid
+flowchart LR
+    ci["CI: unit tests and publish"] --> cd["CD environment test"]
+    cd --> cypress["Cypress against that site"]
+```
+
+CI runs on every push and pull request to `main`: `dotnet test`, `npm test`, `build:wwwroot`, then `dotnet publish`.
+
+CD runs on `main` after CI. It deploys that published build to the Azure DevOps environment `test` and starts it on the agent. Cypress then opens that site. It does not run against `ng serve`. The test host uses the Development auth scheme so the demo subject `user-1` can load invoices before a real identity provider is configured.

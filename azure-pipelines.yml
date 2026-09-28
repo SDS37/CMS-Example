@@ -1,0 +1,122 @@
+# CI builds and tests. CD on main starts that build in the Azure DevOps
+# environment "test", then Cypress opens that site. Cypress does not use ng serve.
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  dotnetSdk: 10.x
+  nodeVersion: 24.x
+  testSiteUrl: http://127.0.0.1:5088
+
+stages:
+  - stage: CI
+    displayName: Build and test
+    jobs:
+      - job: Build
+        displayName: Unit tests and publish
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UseDotNet@2
+            displayName: Install .NET SDK
+            inputs:
+              packageType: sdk
+              version: $(dotnetSdk)
+
+          - script: dotnet test Company.Portal.sln --configuration Release
+            displayName: Test .NET
+
+          - task: NodeTool@0
+            displayName: Install Node
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - script: npm ci
+            displayName: Install frontend dependencies
+            workingDirectory: frontend
+
+          - script: npm test -- --watch=false
+            displayName: Test Angular
+            workingDirectory: frontend
+
+          - script: npm run build:wwwroot
+            displayName: Build the SPA into wwwroot
+            workingDirectory: frontend
+
+          - script: dotnet publish src/Company.Portal.Web/Company.Portal.Web.csproj --configuration Release --output $(Build.ArtifactStagingDirectory)/web
+            displayName: Publish the web host
+
+          - publish: $(Build.ArtifactStagingDirectory)/web
+            displayName: Publish web artifact
+            artifact: web
+
+  - stage: CD
+    displayName: Deploy to test
+    dependsOn: CI
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Test
+        displayName: Test environment
+        pool:
+          vmImage: ubuntu-latest
+        environment: test
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: web
+
+                - task: UseDotNet@2
+                  displayName: Install .NET runtime
+                  inputs:
+                    packageType: sdk
+                    version: $(dotnetSdk)
+
+                - task: NodeTool@0
+                  displayName: Install Node
+                  inputs:
+                    versionSpec: $(nodeVersion)
+
+                - script: npm ci
+                  displayName: Install Cypress
+                  workingDirectory: frontend
+
+                - script: npx cypress install
+                  displayName: Install the Cypress binary
+                  workingDirectory: frontend
+
+                - script: |
+                    set -euo pipefail
+                    logfile="$(Agent.TempDirectory)/web.log"
+                    ASPNETCORE_ENVIRONMENT=Development \
+                      ASPNETCORE_URLS="$(testSiteUrl)" \
+                      dotnet "$(Pipeline.Workspace)/web/Company.Portal.Web.dll" > "$logfile" 2>&1 &
+                    pid=$!
+                    cleanup() { kill "$pid" 2>/dev/null || true; }
+                    trap cleanup EXIT
+                    ready=0
+                    for _ in $(seq 1 40); do
+                      if curl -fsS "$(testSiteUrl)/api/me/invoices-page" -o /dev/null; then
+                        ready=1
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [ "$ready" != 1 ]; then
+                      echo "Test site did not start"
+                      cat "$logfile"
+                      exit 1
+                    fi
+                    cd frontend
+                    npx cypress run --browser chrome
+                  displayName: Run Cypress against the test site
+                  env:
+                    CYPRESS_BASE_URL: $(testSiteUrl)
